@@ -20,11 +20,11 @@
 char IOmap[4096];
 OSAL_THREAD_HANDLE thread1;
 int expectedWKC;
-boolean needlf;
-volatile int wkc;
-boolean inOP;
+boolean needlf;   // print용
+volatile int wkc;    // working counter
+boolean inOP;    // operation인지 체크용
 uint8 currentgroup = 0;
-boolean forceByteAlignment = FALSE;
+boolean forceByteAlignment = FALSE;    // byte 정렬 여부
 
 void simpletest(char *ifname)
 {
@@ -47,22 +47,33 @@ void simpletest(char *ifname)
 
          if (forceByteAlignment)
          {
-            ec_config_map_aligned(&IOmap);
+            ec_config_map_aligned(&IOmap);    // 정렬된 map
          }
          else
          {
             ec_config_map(&IOmap);
          }
 
-         ec_configdc();
+         ec_configdc();   // distribute clock 활성화
 
          printf("Slaves mapped, state to SAFE_OP.\n");
          /* wait for all slaves to reach SAFE_OP state */
-         ec_statecheck(0, EC_STATE_SAFE_OP,  EC_TIMEOUTSTATE * 4);
+         ec_statecheck(0, EC_STATE_SAFE_OP,  EC_TIMEOUTSTATE * 4);    // 모든 slave?에 safe op로 전환 요청?
+      
 
+         /*
+         프로세스 데이터 교환 루프 주기에서 인쇄될 출력 바이트 수(master -> slave)
+         oloop는 slave가 사용하는 출력 bytes 수 obits에 의해 결정
+         출력 bytes가 0인데, 일부 출력 bit가 있으면 oloop가 1로 설정
+         */
          oloop = ec_slave[0].Obytes;
          if ((oloop == 0) && (ec_slave[0].Obits > 0)) oloop = 1;
          if (oloop > 8) oloop = 8;
+
+         /*
+         slave --> master
+
+         */
          iloop = ec_slave[0].Ibytes;
          if ((iloop == 0) && (ec_slave[0].Ibits > 0)) iloop = 1;
          if (iloop > 8) iloop = 8;
@@ -71,6 +82,7 @@ void simpletest(char *ifname)
 
          printf("Request operational state for all slaves\n");
          expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+
          printf("Calculated workcounter %d\n", expectedWKC);
          ec_slave[0].state = EC_STATE_OPERATIONAL;
          /* send one valid process data to make outputs in slaves happy*/
@@ -87,38 +99,38 @@ void simpletest(char *ifname)
             ec_statecheck(0, EC_STATE_OPERATIONAL, 50000);
          }
          while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL));
-         if (ec_slave[0].state == EC_STATE_OPERATIONAL )
+         if (ec_slave[0].state == EC_STATE_OPERATIONAL)
          {
             printf("Operational state reached for all slaves.\n");
             inOP = TRUE;
-                /* cyclic loop */
-            for(i = 1; i <= 10000; i++)
+            /* cyclic loop */
+            for (i = 1; i <= 10000; i++)   // 5ms * 10000 = 50000ms = 50 sec
             {
                ec_send_processdata();
+
                wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-                    if(wkc >= expectedWKC)
-                    {
-                        printf("Processdata cycle %4d, WKC %d , O:", i, wkc);
+               if (wkc >= expectedWKC)
+               {
+                  printf("Processdata cycle %4d, WKC %d , O:", i, wkc);
 
-                        for(j = 0 ; j < oloop; j++)
-                        {
-                            printf(" %2.2x", *(ec_slave[0].outputs + j));
-                        }
+                  for (j = 0; j < oloop; j++)
+                  {
+                     printf(" %2.2x", *(ec_slave[0].outputs + j));
+                  }
 
-                        printf(" I:");
-                        for(j = 0 ; j < iloop; j++)
-                        {
-                            printf(" %2.2x", *(ec_slave[0].inputs + j));
-                        }
-                        printf(" T:%"PRId64"\r",ec_DCtime);
-                        needlf = TRUE;
-                    }
-                    osal_usleep(5000);
-
-                }
-                inOP = FALSE;
+                  printf(" I:");
+                  for (j = 0; j < iloop; j++)
+                  {
+                     printf(" %2.2x", *(ec_slave[0].inputs + j));
+                  }
+                  printf(" T:%" PRId64 "\r", ec_DCtime);
+                  needlf = TRUE;
+               }
+               osal_usleep(5000);   // 5000us = 5ms
             }
+            inOP = FALSE;
+         }
             else
             {
                 printf("Not all slaves reached operational state.\n");
