@@ -600,8 +600,41 @@ void slaveinfo(char *ifname)
          ec_configdc();
          while(EcatError) printf("%s", ec_elist2string());
          printf("%d slaves found and configured.\n",ec_slavecount);
+
+        /*
+            WKC(Working Counter)는 EtherCAT 마스터와 슬레이브 간의 데이터 교환 무결성을 보장하는 데 사용됩니다.
+            프레임을 성공적으로 처리하는 각 슬레이브는 WKC를 증가시킵니다.
+            - 'outputsWKC'는 출력 방향(마스터에서 슬레이브로)에 대한 작업 카운터
+            - 'inputsWKC'는 입력 방향(슬레이브에서 마스터로)에 대한 작업 카운터
+
+            마스터는 데이지 체인 방식으로 각 슬레이브 장치를 통과하는 단일 프레임(텔레그램)을 보냅니다.
+            이 프레임에는 읽기 및 쓰기 명령이 모두 포함되어 있습니다.
+            각 슬레이브는 들어오는 데이터(마스터의 쓰기 명령)를 읽고 처리한 다음 자신의 데이터(마스터의 읽기 명령)를 프레임에 씁니다.
+            이것은 프레임이 슬레이브를 통과할 때 "즉시" 수행됩니다.
+
+            출력 방향(마스터에서 슬레이브로)에서 각 슬레이브는 WKC를 두 번 증가시킵니다.
+            한 번은 프레임에서 데이터를 읽을 때(마스터에서 쓰기 명령을 처리할 때),
+            한 번은 프레임에 데이터를 쓸 때입니다. (마스터에 대한 읽기 명령 처리).
+            이것이 예상 WKC 계산에서 outputsWKC에 2를 곱한 이유입니다.
+
+            반면에 입력 방향(슬레이브에서 마스터로)에서 각 슬레이브는 프레임을 성공적으로 처리할 때 WKC를 한 번만 증가시킵니다.
+
+        */
          expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
          printf("Calculated workcounter %d\n", expectedWKC);
+
+        /*
+            1. Init: This is the initial state after power-up. In this state, the slave device is not yet configured.
+
+            2. Pre-Operational (PreOp): In this state, the slave device is configured by the master. 
+            The master assigns the slave's address and configures the Sync Managers and FMMUs (Fieldbus Memory Management Units). However, process data exchange is not yet enabled.
+            
+            3. Safe Operational (SafeOp): In this state, the slave device is ready to exchange process data, 
+            but it is not yet in the operational state. This state is used to ensure that the system is functioning correctly before it is put into operation.
+            
+            4. Operational (Op): This is the normal operating state. 
+            In this state, the slave device exchanges process data with the master.
+        */
          /* wait for all slaves to reach SAFE_OP state */
          ec_statecheck(0, EC_STATE_SAFE_OP,  EC_TIMEOUTSTATE * 3);
          if (ec_slave[0].state != EC_STATE_SAFE_OP )
@@ -618,7 +651,15 @@ void slaveinfo(char *ifname)
             }
          }
 
+        /*
+            Obits: 이 필드는 슬레이브 장치가 가지고 있는 출력 비트 수를 나타냅니다. 
+            EtherCAT에서 각 슬레이브 장치는 입력 및 출력 데이터를 가질 수 있으며 이 필드는 출력 데이터의 크기를 비트로 지정합니다.
+            Ibits: 마찬가지로 이 필드는 슬레이브 장치가 가지고 있는 입력 비트 수를 나타냅니다. 입력 데이터의 크기를 비트 단위로 지정합니다.
 
+            EtherCAT에서 "입력"과 "출력"이라는 용어는 항상 EtherCAT 마스터의 관점에서 나온 것임을 기억하십시오. 
+            따라서 "입력 비트/바이트"는 슬레이브에서 마스터로의 데이터를 의미하고 
+            "출력 비트/바이트"는 마스터에서 슬레이브로의 데이터를 의미합니다.
+        */
          ec_readstate();
          for( cnt = 1 ; cnt <= ec_slavecount ; cnt++)
          {
@@ -648,6 +689,12 @@ void slaveinfo(char *ifname)
             printf(" FMMUfunc 0:%d 1:%d 2:%d 3:%d\n",
                      ec_slave[cnt].FMMU0func, ec_slave[cnt].FMMU1func, ec_slave[cnt].FMMU2func, ec_slave[cnt].FMMU3func);
             printf(" MBX length wr: %d rd: %d MBX protocols : %2.2x\n", ec_slave[cnt].mbx_l, ec_slave[cnt].mbx_rl, ec_slave[cnt].mbx_proto);
+
+            /*
+            SII stands for "Slave Information Interface". 
+            It's a part of the EtherCAT slave device that contains information about the slave device itself. 
+            This information is stored in EEPROM (Electrically Erasable Programmable Read-Only Memory) on the slave device.
+            */
             ssigen = ec_siifind(cnt, ECT_SII_GENERAL);
             /* SII general section */
             if (ssigen)
@@ -703,6 +750,12 @@ int main(int argc, char *argv[])
 
    if (argc > 1)
    {
+        /*
+         -sdo , -map 옵션 사용시 각각 달라지는 듯..
+         PDO(Process Data Objects) mapping
+         SDO(Service Data Object) 표시
+        */
+
       if ((argc > 2) && (strncmp(argv[2], "-sdo", sizeof("-sdo")) == 0)) printSDO = TRUE;
       if ((argc > 2) && (strncmp(argv[2], "-map", sizeof("-map")) == 0)) printMAP = TRUE;
       /* start slaveinfo */
